@@ -1,0 +1,4 @@
+# PyTorch and torchvision are installed first by install.py, from the index that matches your GPU.
+audio-separator[cpu]==0.48.0
+audioread
+pillow
