@@ -1,7 +1,7 @@
 """Separation worker for stem_gui.py, run as a subprocess so Cancel can simply kill it (and free VRAM).
 
 Writes events to stdout as lines of '@@' + JSON. Anything else on stdout/stderr is plain log output.
-Outputs go to <out>/<song> [<tag>]/<song> - <Stem>.<ext>.
+Outputs go to <out>/<song> [<tag>]/<song> - <Stem> [<tag>].<ext>; repeat runs get ' (2)', ' (3)' ... on both.
 """
 import argparse
 import json
@@ -58,17 +58,36 @@ def safe_name(name):
     return re.sub(r'[<>:"/\\|?*]', "_", name).strip(" .") or "output"
 
 
+def new_run_folder(out_dir, base):
+    """Create '<base>' for the first run, then '<base> (2)', '(3)' ... one above the highest existing number."""
+    pattern = re.compile(re.escape(base) + r"(?: \((\d+)\))?", re.IGNORECASE)
+    runs = [int(m.group(1) or 1) for name in os.listdir(out_dir) if (m := pattern.fullmatch(name))]
+    n = max(runs, default=0) + 1
+    while True:
+        path = os.path.join(out_dir, base if n == 1 else f"{base} ({n})")
+        try:
+            os.mkdir(path)
+            return path, n
+        except FileExistsError:
+            n += 1
+
+
 def move_outputs(files, out_dir, song, tag):
-    """Move audio-separator's '<song>_(<Stem>)_<model>.<ext>' files into a per-song folder with short names."""
-    dest_dir = os.path.join(out_dir, safe_name(f"{song} [{tag}]" if tag else song))
-    os.makedirs(dest_dir, exist_ok=True)
+    """Move audio-separator's '<song>_(<Stem>)_<model>.<ext>' files into a new folder for this run.
+
+    Earlier runs are never overwritten, and every file name carries the model tag and run number, so stems from
+    many runs stay distinct when they are used together.
+    """
+    dest_dir, n = new_run_folder(out_dir, safe_name(f"{song} [{tag}]" if tag else song))
+    suffix = (f" [{tag}]" if tag else "") + (f" ({n})" if n > 1 else "")
     moved = []
     for f in files:
         src = f if os.path.isabs(f) else os.path.join(out_dir, f)
         name = os.path.basename(src)
         m = re.search(r"_\(([^()]+)\)_[^()]*$", name)
         stem = m.group(1) if m else os.path.splitext(name)[0]
-        dest = os.path.join(dest_dir, safe_name(f"{song} - {stem}") + os.path.splitext(name)[1])
+        stem = stem[:1].upper() + stem[1:]  # BS-Roformer SW names its stems in lower case
+        dest = os.path.join(dest_dir, safe_name(f"{song} - {stem}{suffix}") + os.path.splitext(name)[1])
         shutil.move(src, dest)
         moved.append(dest)
     return dest_dir, moved

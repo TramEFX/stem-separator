@@ -12,7 +12,9 @@ ROCm attention bug that otherwise stops Roformer models from running on Radeon c
 ## Features
 - Nine curated Roformer models: vocals/instrumental, karaoke (lead vs backing vocals), 6-stem, de-reverb and denoise
 - AMD ROCm, NVIDIA CUDA, or CPU
-- Queue several songs; output as WAV, FLAC or MP3 (320 kbps)
+- Queue several songs, or drag files and whole folders onto the window; output as WAV, FLAC or MP3 (320 kbps)
+- Repeat runs never overwrite earlier ones, and every file is named with its model and run number, so stems from
+  many runs can be used side by side
 - Half-precision mode for extra speed, live progress, cancel at any time
 - Models download automatically the first time you use them
 
@@ -34,12 +36,15 @@ To skip the menu, pass the target: `install.bat amd-rx9070`, `install.bat nvidia
 (the keys are listed in [install.py](install.py)). To switch to a different GPU later, run `install.bat` again.
 
 ## Usage
-1. **Add** one or more songs.
+1. **Add** one or more songs, or drag them onto the window. A dropped folder adds every audio file in it, subfolders
+   included.
 2. Pick a **model** and an **output** folder and format.
 3. Press **Separate**.
 
-Each song gets its own folder: `<output>/<song> [<model>]/<song> - <stem>.<ext>`. **Cancel** stops right away, but
-the stems of the song that was in progress may be incomplete.
+Each song gets its own folder: `<output>/<song> [<model>]/<song> - <Stem> [<model>].<ext>`. Separating the same song
+with the same model again doesn't overwrite anything: the new run goes to `<song> [<model>] (2)`, then `(3)` and so
+on, and the number is added to its file names too. **Cancel** stops right away, but the stems of the song that was in
+progress may be incomplete.
 
 | Model | Stems |
 |---|---|
@@ -96,6 +101,7 @@ Found while getting this working on an RX 9070 XT (gfx1201) with torch 2.12.0+ro
 - Fonts: [Orbitron](https://fonts.google.com/specimen/Orbitron), [Rajdhani](https://fonts.google.com/specimen/Rajdhani)
   and [Share Tech Mono](https://fonts.google.com/specimen/Share+Tech+Mono), under the SIL Open Font License
   (licence files in `assets/fonts`).
+- Drag and drop: [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2) (MIT), which bundles the tkdnd library.
 
 ## License
 [MIT](LICENSE)

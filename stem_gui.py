@@ -19,12 +19,18 @@ from PIL import ImageTk
 import scifi_ui as ui
 from scifi_ui import C, px
 
-APP_VERSION = "1.0"
+try:
+    from tkinterdnd2 import COPY, DND_FILES, REFUSE_DROP, TkinterDnD
+except ImportError:  # installs from before 1.1 lack it; the app then runs without drag and drop
+    TkinterDnD = None
+
+APP_VERSION = "1.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(HERE, "models")
 SETTINGS = os.path.join(HERE, "settings.json")
 WORKER = os.path.join(HERE, "separate_worker.py")
-AUDIO_TYPES = [("Audio", "*.wav *.mp3 *.flac *.m4a *.aac *.ogg *.opus *.aiff *.aif *.wma"), ("All files", "*.*")]
+AUDIO_EXTS = (".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".aiff", ".aif", ".wma")
+AUDIO_TYPES = [("Audio", " ".join("*" + e for e in AUDIO_EXTS)), ("All files", "*.*")]
 
 # (label, checkpoint filename, short tag used in output folder names, stems)
 MODELS = [
@@ -61,6 +67,21 @@ def clock(seconds):
     return f"{m:02d}:{s:02d}"
 
 
+def audio_files(paths):
+    """Expand dropped paths: audio files as they are, folders to every audio file inside them. Returns (files, skipped)."""
+    found, skipped = [], 0
+    for p in paths:
+        if os.path.isdir(p):
+            for folder, dirs, names in os.walk(p):
+                dirs.sort()
+                found += [os.path.join(folder, n) for n in sorted(names) if n.lower().endswith(AUDIO_EXTS)]
+        elif p.lower().endswith(AUDIO_EXTS):
+            found.append(p)
+        else:
+            skipped += 1
+    return found, skipped
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -84,7 +105,9 @@ class App:
         self.icons = [ImageTk.PhotoImage(ui.render_icon(n), master=root) for n in (16, 32, 48, 256)]
         root.iconphoto(True, *self.icons)
 
-        main = tk.Frame(root, bg=C["bg"])
+        shell = tk.Frame(root, bg=C["bg"])  # drop target covering the whole window, margins included
+        shell.pack(fill="both", expand=True)
+        main = tk.Frame(shell, bg=C["bg"])
         main.pack(fill="both", expand=True, padx=px(18), pady=(px(8), px(14)))
         main.columnconfigure(0, weight=1, uniform="half")
         main.columnconfigure(1, weight=1, uniform="half")
@@ -109,6 +132,9 @@ class App:
         self.files.configure(yscrollcommand=sb.set)
         self.empty_hint = tk.Label(self.files, text="NO SOURCE LOADED  //  PRESS ADD TO QUEUE AUDIO FILES",
                                    bg=C["field"], fg=C["faint"], font=f.mono(9))
+        self.drop_hint = tk.Label(self.files, text="RELEASE TO QUEUE  //  AUDIO FILES AND FOLDERS",
+                                  bg=C["accent_deep"], fg=C["accent"], font=f.mono(10))
+        self._drop_shown = False
         side = tk.Frame(b, bg=C["panel"])
         side.grid(row=0, column=2, sticky="n", padx=(px(10), 0))
         self.add_btn = ui.MetalButton(side, "Add", self.add_files, width=116, height=30, icon="plus")
@@ -162,7 +188,7 @@ class App:
         self.fmt = tk.StringVar(value=s.get("format") if s.get("format") in FORMATS else "WAV")
         self.fmt_choice = ui.SegmentedChoice(row, [(x, x) for x in FORMATS], self.fmt)
         self.fmt_choice.pack(side="left")
-        tk.Label(b, text="WRITES  <OUT>/<SONG> [MODEL]/<SONG> - <STEM>", bg=C["panel"],
+        tk.Label(b, text="NEW FOLDER EACH RUN  //  <SONG> [MODEL] (2), (3) ...", bg=C["panel"],
                  fg=C["faint"], font=f.mono(8), anchor="w").grid(row=2, column=0, columnspan=2, sticky="w",
                                                                  pady=(px(10), 0))
 
@@ -212,6 +238,8 @@ class App:
         self.cancel_btn.pack(side="right", padx=(0, px(6)))
         self.cancel_btn.set_enabled(False)
 
+        if self.enable_drop(shell):
+            self.empty_hint.configure(text="NO SOURCE LOADED  //  DROP AUDIO HERE OR PRESS ADD")
         self.refresh_files()
         self.update_model_info()
         self.write_log(f">> STEM SEPARATOR V{APP_VERSION}  //  SYSTEM READY", "info")
@@ -281,6 +309,50 @@ class App:
     def tick_clock(self):
         self.elapsed.configure(text="T+ " + clock(time.monotonic() - self.started))
         self._clock_job = self.root.after(500, self.tick_clock)
+
+    # ---- drag and drop
+    def enable_drop(self, widget):
+        """Accept files and folders dropped anywhere on `widget`. Returns False when tkinterdnd2 is unavailable."""
+        if TkinterDnD is None:
+            return False
+        try:
+            TkinterDnD.require(self.root)
+        except RuntimeError:
+            return False
+        widget.drop_target_register(DND_FILES)
+        widget.dnd_bind("<<DropEnter>>", self.on_drag)
+        widget.dnd_bind("<<DropPosition>>", self.on_drag)
+        widget.dnd_bind("<<DropLeave>>", lambda e: self.show_drop_zone(False))
+        widget.dnd_bind("<<Drop>>", self.on_drop)
+        return True
+
+    def show_drop_zone(self, on):
+        if on == self._drop_shown:
+            return
+        self._drop_shown = on
+        if on:
+            self.drop_hint.place(relx=0, rely=0, relwidth=1, relheight=1)
+        else:
+            self.drop_hint.place_forget()
+        self.files.configure(highlightbackground=C["accent"] if on else C["line_hi"])
+
+    def on_drag(self, event):
+        if self.proc:  # the queue is fixed while a separation runs
+            return REFUSE_DROP
+        self.show_drop_zone(True)
+        return COPY  # never MOVE: Explorer would then delete the originals
+
+    def on_drop(self, event):
+        self.show_drop_zone(False)
+        if self.proc:
+            return REFUSE_DROP
+        found, skipped = audio_files(self.root.tk.splitlist(event.data))
+        self.add_paths(found)
+        if not found:
+            self.write_log("   drop ignored: no audio files in it", "warn")
+        elif skipped:
+            self.write_log(f"   skipped {skipped} non-audio item{'s' * (skipped > 1)}", "warn")
+        return COPY
 
     # ---- actions
     def add_paths(self, paths):

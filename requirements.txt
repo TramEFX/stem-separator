@@ -2,3 +2,4 @@
 audio-separator[cpu]==0.48.0
 audioread
 pillow
+tkinterdnd2==0.7.0
